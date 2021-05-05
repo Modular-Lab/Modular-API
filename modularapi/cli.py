@@ -270,7 +270,7 @@ def cli_db_revision(
     ),
     autogenerate: bool = typer.Option(
         False,
-        "-autogenerate",
+        "--autogenerate",
         help="Whether or not to autogenerate the script from the database.",
     ),
     sql: bool = typer.Option(
