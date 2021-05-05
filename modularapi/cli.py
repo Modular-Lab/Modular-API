@@ -1,4 +1,4 @@
-import modularapi
+# coding: utf-8
 import sys
 import os
 import venv
@@ -7,74 +7,97 @@ import subprocess
 import time
 import json
 import re
+import traceback
 from pathlib import Path
-from importlib import import_module
+from typing import Any, List, Optional
+# from importlib import import_module
 from contextlib import redirect_stdout
 
 import click
 import git
 
 from alembic import command
-from alembic.config import Config
-
-from modularapi.utils import _on_rmtree_error
 
 
-class AlembicConfig(Config):
-    def get_template_directory(self):
-        pkg_dir = Path(__file__).resolve().parent
-        return pkg_dir / "templates"
+import typer
+
+from modularapi.utils import AlembicConfig, _on_rmtree_error
 
 
-if sys.version_info.major < 3 or sys.version_info.minor < 6:
-    click.secho("This framework need Python 3.6 or higher !", fg="red")
-    exit(1)
-
-info_style = click.style("INFO", bg="white", fg="black", bold=True)
-success_style = click.style("SUCCESS", bg="green", fg="black", bold=True)
-warning_style = click.style("WARNING", bg="yellow", fg="black", bold=True)
-error_style = click.style("ERROR", bg="red", fg="black", bold=True)
+if sys.version_info < (3, 6, 1):
+    typer.echo("This framework need at least Python 3.6.1")
+    exit(code=1)
 
 
-@click.group()
-@click.pass_context
-def cli(ctx):
-    """
-    Manage your ModularAPI project with the CLI.
-    """
-    ctx.ensure_object(dict)
-    ctx.obj["start_time"] = time.time()
+cli = typer.Typer()
 
 
-@cli.resultcallback()
-@click.pass_context
-def process_result(ctx, result, **kwargs):
-    click.echo(f"{success_style} Done in {time.time() - ctx.obj['start_time']:.3f}s.")
-
-
-# util command
-@cli.command(name="version")
-def cli_version():
-    """
-    Check the installed version of Modular-API
-    """
-    click.echo(
-        f"{info_style} Modular-API is installed : version {modularapi.__version__} "
+def result_callback(result: Any) -> None:
+    ctx = click.get_current_context()
+    typer.echo(
+        f"{ctx.obj['style']['success']} in {time.time() - ctx.obj['start_time']:.3f}s.",
+        err=True,
     )
 
 
-# group db
-@cli.group(name="db")
-def cli_db():
+@cli.callback(result_callback=result_callback)
+def setup(
+    ctx: typer.Context,
+):
+    ctx.ensure_object(dict)
+    ctx.obj = {
+        "start_time": time.time(),
+        "style": {
+            "info": typer.style(
+                "INFO", bg=typer.colors.WHITE, fg=typer.colors.BLACK, bold=True
+            ),
+            "success": typer.style(
+                "SUCCESS", bg=typer.colors.GREEN, fg=typer.colors.BLACK, bold=True
+            ),
+            "warning": typer.style(
+                "WARNING", bg=typer.colors.YELLOW, fg=typer.colors.BLACK, bold=True
+            ),
+            "error": typer.style(
+                "ERROR", bg=typer.colors.RED, fg=typer.colors.BLACK, bold=True
+            ),
+        },
+    }
+
+
+@cli.command(name="version")
+def cli_version(
+    ctx: typer.Context,
+):
     """
-    Manage your PostGreSQL database.
+    Check the version of Modular-API.
     """
+    import modularapi
+
+    typer.echo(
+        f"{ctx.obj['style']['info']} Modular-API is installed : version {modularapi.__version__}",
+        err=True,
+    )
+
+
+# db
+cli_db = typer.Typer(
+    name="db",
+    help="Manage your PostgreSQL database.",
+    short_help="Manage your PostgreSQL database.",
+)
+cli.add_typer(cli_db)
 
 
 # db branches
 @cli_db.command(name="branches")
-@click.option("-v", "--verbose", is_flag=True, help="Output in verbose mode.")
-def cli_db_branches(verbose):
+def cli_db_branches(
+    verbose: bool = typer.Option(
+        False,
+        "-v",
+        "--verbose",
+        help="Output in verbose mode",
+    )
+):
     """
     Show current branch points.
     """
@@ -85,8 +108,14 @@ def cli_db_branches(verbose):
 
 # db current
 @cli_db.command(name="current")
-@click.option("-v", "--verbose", is_flag=True, help="Output in verbose mode.")
-def cli_db_current(verbose):
+def cli_db_current(
+    verbose: bool = typer.Option(
+        False,
+        "-v",
+        "--verbose",
+        help="Output in verbose mode",
+    )
+):
     """
     Display the current revision for a database.
     """
@@ -97,9 +126,16 @@ def cli_db_current(verbose):
 
 # db downgrade <revision>
 @cli_db.command(name="downgrade")
-@click.argument("revision")
-@click.option("--sql", is_flag=True, help="Use the sql mode.")
-def cli_db_downgrade(revision, sql):
+def cli_db_downgrade(
+    revision: str = typer.Argument(
+        ...,
+        help="A string revision target or range for –sql mode",
+    ),
+    sql: bool = typer.Option(
+        False,
+        help="Use the SQL mode",
+    ),
+):
     """
     Revert to a previous version.
     """
@@ -110,8 +146,12 @@ def cli_db_downgrade(revision, sql):
 
 # db edit <rev>
 @cli_db.command(name="edit")
-@click.argument("rev")
-def cli_db_edit(rev):
+def cli_db_edit(
+    rev: str = typer.Argument(
+        ...,
+        help="A string revision target",
+    )
+):
     """
     Edit revision script(s) using $EDITOR.
     """
@@ -122,29 +162,51 @@ def cli_db_edit(rev):
 
 # db heads
 @cli_db.command(name="heads")
-@click.option("-v", "--verbose", is_flag=True, help="Output in verbose mode.")
-@click.option(
-    "--resolve-dependencies",
-    is_flag=True,
-    help="Treat dependency version as down revisions.",
-)
-def cli_db_heads(verbose, resolve_dependencies):
+def cli_db_heads(
+    verbose: bool = typer.Option(
+        False,
+        "-v",
+        "--verbose",
+        help="Output in verbose mode",
+    ),
+    resolve_dependencies: bool = typer.Option(
+        False,
+        "--resolve-dependencies",
+        help="Treat dependency version as down revisions.",
+    ),
+):
     """
     Revert to a previous version.
     """
     alembic_cfg = AlembicConfig("alembic.ini")
     alembic_cfg.set_main_option("script_location", str(Path() / "db_migrations"))
     command.heads(
-        config=alembic_cfg, verbose=verbose, resolve_dependencies=resolve_dependencies
+        config=alembic_cfg,
+        verbose=verbose,
+        resolve_dependencies=resolve_dependencies,
     )
 
 
 # db history
 @cli_db.command(name="history")
-@click.option("--rev-range", default=None, help="String revision range.")
-@click.option("-v", "--verbose", is_flag=True, help="Output in verbose mode.")
-@click.option("--indicate_current", is_flag=True, help="Indicate current revision.")
-def cli_db_history(rev_range, verbose, indicate_current):
+def cli_db_history(
+    rev_range: bool = typer.Option(
+        False,
+        "--rev-range",
+        help="String revision range.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "-v",
+        "--verbose",
+        help="Output in verbose mode.",
+    ),
+    indicate_current: bool = typer.Option(
+        False,
+        "--indicate_current",
+        help="Indicate current revision.",
+    ),
+):
     """
     List changeset scripts in chronological order.
     """
@@ -160,21 +222,29 @@ def cli_db_history(rev_range, verbose, indicate_current):
 
 # db merge
 @cli_db.command(name="merge")
-@click.argument("revisions", nargs=-1)
-@click.option(
-    "-m", "--message", default=None, help="A string message to apply to the revision"
-)
-@click.option(
-    "--branch-label",
-    default=None,
-    help="String label name to apply to the new revision",
-)
-@click.option(
-    "--rev-id",
-    default=None,
-    help="Hardcoded revision identifier instead of generating a new one.",
-)
-def cli_db_merge(revisions, message, branche_label, rev_id):
+def cli_db_merge(
+    revisions: List[str] = typer.Argument(
+        ...,
+        help="You can pass to it an argument such as heads, meaning we’d like to merge all heads."
+        " Or, you can pass it individual revision numbers sequentally:",
+    ),
+    message: Optional[str] = typer.Option(
+        None,
+        "-m",
+        "--message",
+        help="A string message to apply to the revision",
+    ),
+    branche_label: Optional[str] = typer.Option(
+        None,
+        "--branch-label",
+        help="A string label name to apply to the new revision",
+    ),
+    rev_id: Optional[str] = typer.Option(
+        None,
+        "--rev-id",
+        help="Hardcoded revision identifier instead of generating a new one.",
+    ),
+):
     """
     Merge two (or more) revisions together. Creates a new migration file.
     """
@@ -191,45 +261,49 @@ def cli_db_merge(revisions, message, branche_label, rev_id):
 
 # db revision
 @cli_db.command(name="revision")
-@click.option(
-    "--message", "-m", default=None, help="A message to apply to the revision."
-)
-@click.option(
-    "--autogenerate",
-    is_flag=True,
-    help="Whether or not to autogenerate the script from the database.",
-)
-@click.option(
-    "--sql",
-    is_flag=True,
-    help="Whether to dump the script out as a SQL string; when specified, the script is dumped to stdout.",
-)
-@click.option(
-    "--head",
-    default="head",
-    help="Head revision to build the new revision upon as a parent.",
-)
-@click.option(
-    "--splice",
-    is_flag=True,
-    help="Whether or not the new revision should be made into a new head of its own; is required when the given head is"
-    " not itself a head.",
-)
-@click.option(
-    "--branch-label", default=None, help="String label to apply to the branch."
-)
-@click.option(
-    "--version-path",
-    default=None,
-    help="String symbol identifying a specific version path from the configuration.",
-)
-@click.option(
-    "--rev-id",
-    default=None,
-    help="Optional revision identifier to use instead of having one generated.",
-)
 def cli_db_revision(
-    message, autogenerate, sql, head, splice, branch_label, version_path, rev_id
+    message: Optional[str] = typer.Option(
+        None,
+        "-m",
+        "--message",
+        help="A message to apply to the revision.",
+    ),
+    autogenerate: bool = typer.Option(
+        False,
+        "-autogenerate",
+        help="Whether or not to autogenerate the script from the database.",
+    ),
+    sql: bool = typer.Option(
+        False,
+        "-sql",
+        help="Whether to dump the script out as a SQL string; when specified, the script is dumped to stdout.",
+    ),
+    head: str = typer.Option(
+        "head",
+        "--head",
+        help="Head revision to build the new revision upon as a parent.",
+    ),
+    splice: bool = typer.Option(
+        False,
+        "--splice",
+        help="Whether or not the new revision should be made into a new head of its own;"
+        " is required when the given head is not itself a head.",
+    ),
+    branch_label: Optional[str] = typer.Option(
+        None,
+        "--branche-label",
+        help="A string label to apply to the branch.",
+    ),
+    version_path: Optional[str] = typer.Option(
+        None,
+        "--version-path",
+        help="String symbol identifying a specific version path from the configuration.",
+    ),
+    rev_id: Optional[str] = typer.Option(
+        None,
+        "--rev-id",
+        help="Optional revision identifier to use instead of having one generated.",
+    ),
 ):
     """
     Create a new revision file.
@@ -254,50 +328,59 @@ def cli_db_revision(
 
 # db show <rev>
 @cli_db.command(name="show")
-@click.argument("revisions")
-def cli_db_show(revisions):
+def cli_db_show(
+    revisions: str = typer.Argument(
+        ...,
+        help="A string revision target.",
+    ),
+):
     """
     Show the revision(s) denoted by the given symbol.
     """
     alembic_cfg = AlembicConfig("alembic.ini")
     alembic_cfg.set_main_option("script_location", str(Path() / "db_migrations"))
-    command.show(
-        config=alembic_cfg,
-        rev=revisions,
-    )
+    command.show(config=alembic_cfg, rev=revisions)
 
 
 # db stamp <revision='head'>
 @cli_db.command(name="stamp")
-@click.argument("revision", default="head")
-@click.option(
-    "--sql",
-    is_flag=True,
-    help="Use the SQL mode.",
-)
-@click.option(
-    "--purge",
-    is_flag=True,
-    help="Delete all entries in the version table before stamping.",
-)
-def cli_db_stamp(revision, sql, purge):
+def cli_db_stamp(
+    revisions: List[str] = typer.Argument(
+        ...,
+        help="target revision or list of revisions. May be a list to indicate stamping of multiple branch heads.",
+    ),
+    sql: bool = typer.Option(
+        False,
+        "--sql",
+        help="Use the SQL mode.",
+    ),
+    purge: bool = typer.Option(
+        False,
+        "--purge",
+        help="Delete all entries in the version table before stamping.",
+    ),
+):
     """
     Stamp the revision table with the given revision; don’t run any migrations.
     """
     alembic_cfg = AlembicConfig("alembic.ini")
     alembic_cfg.set_main_option("script_location", str(Path() / "db_migrations"))
-    command.stamp(config=alembic_cfg, revision=revision, sql=sql, purge=purge)
+    command.stamp(config=alembic_cfg, revision=revisions, sql=sql, purge=purge)
 
 
 # db upgrade <revision>
 @cli_db.command(name="upgrade")
-@click.argument("revision")
-@click.option(
-    "--sql",
-    is_flag=True,
-    help="Use the SQL mode.",
-)
-def cli_db_upgrade(revision, sql):
+def cli_db_upgrade(
+    revision: str = typer.Argument(
+        ...,
+        help="A string revision target or range for –sql mode",
+    ),
+    sql: bool = typer.Option(
+        False,
+        "--sql",
+        help="Use the SQL mode.",
+    ),
+):
     """
     Upgrade to a later version.
     """
@@ -306,26 +389,32 @@ def cli_db_upgrade(revision, sql):
     command.upgrade(config=alembic_cfg, revision=revision, sql=sql)
 
 
-# group modules
-@cli.group(name="modules")
-def cli_modules():
-    """
-    Manage your modules.
-    """
+# module
+cli_modules = typer.Typer(
+    name="modules",
+    help="Manage your modules.",
+    short_help="Manage your modules.",
+)
+cli.add_typer(cli_modules)
 
 
 # modules add <git_remote_link>
 @cli_modules.command(name="add")
-@click.argument("github_repo")
-def cli_modules_add(github_repo):
+def cli_modules_add(
+    ctx: typer.Context,
+    github_repo: str = typer.Argument(
+        ...,
+        help="The git remote URL",
+    ),
+):
     """
     Add a module from a git remote url ( github / gitlab / ect... ).
     """
     p = Path("./modules")
 
     if not p.is_dir():
-        click.echo(
-            f"{warning_style} The `modules` directory doesn't exist, creating one ..."
+        typer.echo(
+            f"{ctx.obj['style']['warning']} The `modules` directory doesn't exist, creating one ..."
         )
     p.mkdir(parents=True, exist_ok=True)
 
@@ -340,23 +429,31 @@ def cli_modules_add(github_repo):
             repo_name = github_repo.split("/")[-1]
 
     if (p / repo_name).is_dir():
-        click.echo(f"{error_style} The module `{repo_name}` is already installed !")
-        exit(1)
+        typer.echo(
+            f"{ctx.obj['style']['error']} The module `{repo_name}` is already installed !"
+        )
+        raise typer.Exit(code=1)
 
-    click.echo(f"{info_style} Downloading the module ...")
+    typer.echo(f"{ctx.obj['style']['info']} Downloading the module ...")
 
     try:
         git.Repo.clone_from(url=github_repo, to_path=p / repo_name)
     except git.exc.CommandError:
-        click.echo(f"{error_style} Repository `{github_repo}` doesn't exist !")
-        exit(1)
+        typer.echo(
+            f"{ctx.obj['style']['error']} Repository `{github_repo}` doesn't exist !"
+        )
+        raise typer.Exit(code=1)
 
-    click.echo(f"{success_style} The module has been installed in `{p / repo_name}`.")
-    click.echo(f"{info_style} Searching for a `requirements.txt` file ...")
+    typer.echo(
+        f"{ctx.obj['style']['success']} The module has been installed in `{p / repo_name}`."
+    )
+    typer.echo(
+        f"{ctx.obj['style']['info']} Searching for a `requirements.txt` file ..."
+    )
     req_file = p / repo_name / "requirements.txt"
     if req_file.is_file():
-        click.echo(
-            f"{info_style} requirements file found, installing it on the venv ..."
+        typer.echo(
+            f"{ctx.obj['style']['info']} requirements file found, installing dependencies on the venv ..."
         )
 
         # on Windows
@@ -368,82 +465,127 @@ def cli_modules_add(github_repo):
             python_path = Path("venv") / "bin" / "python"
 
         subprocess.run(
-            [python_path, "-m", "pip", "install", "-r", req_file],
+            [python_path, "-m", "pip", "install", "-r", req_file, "--upgrade"],
             check=True,
         )
     else:
-        click.echo(f"{info_style} requirements files not found.")
+        typer.echo(f"{ctx.obj['style']['info']} requirements files not found.")
 
 
 # modules remove <module_name>
-@cli_modules.group(name="remove", invoke_without_command=True)
-@click.argument("module_name")
-def cli_modules_remove(module_name):
+@cli_modules.command(name="remove")
+def cli_modules_remove(
+    ctx: typer.Context,
+    module_name: str = typer.Argument(
+        ...,
+        help="The module name to remove",
+    ),
+):
     """
     Remove a module.
     """
-
     p = Path("./modules") / Path(module_name)
     if not p.is_dir():
-        click.echo(f"{error_style} The module `{module_name}` doesn't exist !")
-        exit(1)
+        typer.echo(
+            f"{ctx.obj['style']['error']} The module `{module_name}` doesn't exist !"
+        )
+        raise typer.Exit(code=1)
 
-    click.echo(f"{info_style} Uninstalling `{module_name}` ...")
+    typer.echo(f"{ctx.obj['style']['info']} Uninstalling `{module_name}` ...")
     shutil.rmtree(p, onerror=_on_rmtree_error)
-    click.echo(f"{success_style} `{module_name}` has been correctly removed.")
+    typer.echo(
+        f"{ctx.obj['style']['success']} `{module_name}` has been correctly removed."
+    )
 
 
-# modules remove all
-@cli_modules_remove.command(name="all")
-def cli_modules_remove_all():
+# modules purge
+@cli_modules.command(name="purge")
+def cli_modules_purge(
+    ctx: typer.Context,
+):
     """
-    Remove all modules
+    Remove all modules.
     """
     p = Path("./modules")
     if not p.is_dir():
-        click.echo(f"{error_style} There is no modules dir !")
-        exit(1)
+        typer.echo(f"{ctx.obj['style']['error']} There is no modules directory !")
+        raise typer.exit(code=1)
 
     shutil.rmtree(p, onerror=_on_rmtree_error)
     p.mkdir(parents=True, exist_ok=True)
 
 
 # modules update <module_name>
-@cli_modules.group(name="update", invoke_without_command=True)
-@click.argument("module_name")
-def cli_modules_update(module_name):
+@cli_modules.command(name="update")
+def cli_modules_update(
+    ctx: typer.Context,
+    module_name: str = typer.Argument(
+        ...,
+        help="The module name to update",
+    ),
+):
     """
     Update a module from a git remote.
     """
     p = Path("./modules") / module_name
 
     if not p.is_dir():
-        click.echo(f"{error_style} The module `{module_name}` doesn't exist")
-        exit(1)
+        typer.echo(
+            f"{ctx.obj['style']['error']} The module `{module_name}` doesn't exist"
+        )
+        raise typer.Exit(code=1)
 
-    click.secho(f"{info_style} Updating `{module_name}` ...")
+    typer.echo(f"{ctx.obj['style']['info']} Updating `{module_name}` ...")
 
     try:
         repo = git.Repo(p)
     except git.exc.InvalidGitRepositoryError:
-        click.echo(
-            f"{error_style} the module `{p}` isn't valid (probably missing the .git folder) !",
+        typer.echo(
+            f"{ctx.obj['style']['error']} the module `{p}` isn't valid (probably missing the .git folder) !",
         )
-        exit(1)
+        raise typer.Exit(code=1)
 
     try:
         repo.remotes.origin.pull()
     except git.exc.GitCommandError:
         # In the case the repo was deleted from github/gitlab/ect
-        click.echo(f"{error_style} Unable to update, check the remote origin !")
-        exit(1)
+        typer.echo(
+            f"{ctx.obj['style']['error']} Unable to update, check the remote origin !"
+        )
+        raise typer.Exit(code=1)
 
-    click.echo(f"{info_style} `{module_name}` has been updated.")
+    typer.echo(f"{ctx.obj['style']['info']} `{module_name}` has been updated.")
+    typer.echo(
+        f"{ctx.obj['style']['info']} Searching for a `requirements.txt` file ..."
+    )
+
+    req_file = p / "requirements.txt"
+    if req_file.is_file():
+        typer.echo(
+            f"{ctx.obj['style']['info']} requirements file found, installing dependencies on the venv ..."
+        )
+
+        # on Windows
+        if os.name == "nt":
+            python_path = Path("venv") / "Scripts" / "python.exe"
+
+        # on Unix
+        else:
+            python_path = Path("venv") / "bin" / "python"
+
+        subprocess.run(
+            [python_path, "-m", "pip", "install", "-r", req_file, "--upgrade"],
+            check=True,
+        )
+    else:
+        typer.echo(f"{ctx.obj['style']['info']} requirements files not found.")
 
 
-# modules update all
-@cli_modules_update.command(name="all")
-def cli_modules_update_all():
+# modules update-all
+@cli_modules.command(name="update-all")
+def cli_modules_update_all(
+    ctx: typer.Context,
+):
     """
     Update all modules.
     """
@@ -452,75 +594,79 @@ def cli_modules_update_all():
         if module_name.is_dir():
             try:
                 repo = git.Repo(p / module_name)
-                try:
-                    repo.remotes.origin.pull()
-                except git.exc.GitCommandError:
-                    # In the case the repo was deleted from github/gitlab/ect
-                    click.echo(
-                        f"{error_style} Unable to update, check the remote origin !"
-                    )
+                repo.remotes.origin.pull()
             except git.exc.InvalidGitRepositoryError:
-                click.echo(
-                    f"{warning_style} the module `{module_name}` couldn't be updated !",
+                typer.echo(
+                    f"{ctx.obj['style']['warning']} the module `{module_name}` couldn't be updated !",
+                )
+            except git.exc.GitCommandError:
+                # In the case the repo was deleted from github/gitlab/ect
+                typer.echo(
+                    f"{ctx.obj['style']['error']} Unable to update, check the remote origin !"
+                )
+            typer.echo(
+                f"{ctx.obj['style']['info']} Searching for a `requirements.txt` file ..."
+            )
+
+            req_file = module_name / "requirements.txt"
+            if req_file.is_file():
+                typer.echo(
+                    f"{ctx.obj['style']['info']} requirements file found, installing dependencies on the venv ..."
                 )
 
+                # on Windows
+                if os.name == "nt":
+                    python_path = Path("venv") / "Scripts" / "python.exe"
 
-# modules build <module_name>
-@cli_modules.command(name="build")
-@click.argument("module_name")
-def cli_modules_build(module_name):
-    """
-    Build the module.
-    """
-    p = Path("./modules") / module_name
-    if not p.is_dir():
-        click.echo(f"{error_style} {module_name} doesn't exists !")
-        exit(1)
-    try:
-        sys.path.append(str(Path().resolve()))
-        module = import_module(f"modules.{module_name}.main")
-        build_hook = getattr(module, "on_build")
-        build_hook()
+                # on Unix
+                else:
+                    python_path = Path("venv") / "bin" / "python"
 
-    except ModuleNotFoundError:
-        click.echo(f"{error_style} {module_name} module doesn't have main.py !")
-        exit(1)
-    except AttributeError:
-        click.echo(
-            f"{error_style} {module_name} module doesn't have build_module hook !"
-        )
-        exit(1)
-    except TypeError:
-        click.echo(f"{error_style} {module_name}.main.build_module is not callable !")
-        exit(1)
+                subprocess.run(
+                    [python_path, "-m", "pip", "install", "-r", req_file, "--upgrade"],
+                    check=True,
+                )
+            else:
+                typer.echo(f"{ctx.obj['style']['info']} requirements files not found.")
 
 
-# modules export <file.json>
+# modules export <file.json=sys.stdout>
 @cli_modules.command(name="export")
-@click.argument("output_file", type=click.File("w"))
-def cli_modules_export(output_file):
+def cli_modules_export(
+    ctx: typer.Context,
+    output_file: typer.FileTextWrite = typer.Argument(
+        sys.stdout,
+        help="The output file (sys.stdout by default).",
+    ),
+):
     """
     Export all modules as json format.
     """
-
     repos = {}
     for module_name in Path("./modules").glob("*"):
         if module_name.is_dir():
             try:
                 repos[module_name.parts[-1]] = git.Repo(module_name)
             except git.exc.InvalidGitRepositoryError:
-                click.echo(
-                    f"{warning_style} the module `{module_name}` couldn't be exported !"
+                typer.echo(
+                    f"{ctx.obj['style']['warning']} the module `{module_name}` couldn't be exported !"
                 )
 
     res = {str(path): list(repo.remotes.origin.urls) for path, repo in repos.items()}
     json.dump(res, fp=output_file, indent=4, sort_keys=True)
+    if output_file is sys.stdout:
+        sys.stdout.flush()
 
 
-# modules import <file.json>
+# modules import <file.json=sys.stdin>
 @cli_modules.command(name="import")
-@click.argument("input_file", type=click.File("r"))
-def cli_modules_import(input_file):
+def cli_modules_import(
+    ctx: typer.Context,
+    input_file: typer.FileText = typer.Argument(
+        sys.stdin,
+        help="The input file (sys.stdin by default).",
+    ),
+):
     """
     Import all modules from json format file.
     """
@@ -529,53 +675,67 @@ def cli_modules_import(input_file):
         try:
             git.Repo.clone_from(url=repo_urls[0], to_path=(p / module))
         except (IndexError, git.exc.GitCommandError):
-            click.secho(f"{warning_style} the module `{module}` couldn't be imported !")
+            typer.echo(
+                f"{ctx.obj['style']['warning']} the module `{module}` couldn't be imported !"
+            )
 
 
 # modules update list
 @cli_modules.command(name="list")
-def cli_modules_list():
+def cli_modules_list(
+    ctx: typer.Context,
+):
     """
     List all installed modules.
     """
-
-    p = Path("./modules")
+    p = Path("modules")
+    if not p.is_dir():
+        typer.echo(
+            f"{ctx.obj['style']['error']} There is no modules directory !", err=True
+        )
+        raise typer.Exit(code=1)
 
     modules = [m.parts[-1] for m in p.glob("*") if m.is_dir()]
     if modules:
-        click.secho("\n".join(f"{m} is installed" for m in modules))
+        typer.echo("\n".join(f"{m} is installed" for m in modules))
     else:
-        click.secho(f"{warning_style} There is no module installed !")
+        typer.echo(f"{ctx.obj['style']['warning']} There is no module installed !")
 
 
-# modules create <module_name> --readme=False
+# modules create <module_name>
 @cli_modules.command(name="create")
-@click.argument("module_name")
-@click.option(
-    "--readme",
-    is_flag=True,
-    help="Create a readme.md in your module",
-)
-def cli_modules_create(module_name, readme):
+def cli_modules_create(
+    ctx: typer.Context,
+    module_name: str = typer.Argument(..., help="The module name to create."),
+    readme: bool = typer.Option(
+        False,
+        "--readme",
+        "--with-readmy",
+        help="Keep the readme.md file in your module.",
+    ),
+):
     """
     Create a module from the official template
     """
-
     template_url = "https://github.com/Modular-Lab/module_template.git"
 
-    p = Path("./modules")
+    p = Path("modules")
 
+    # ensure the modules directory exists
     p.mkdir(exist_ok=True)
 
     if (p / module_name).is_dir():
-        click.echo(f"{error_style} The module already exists !")
-        exit(1)
+        typer.echo(f"{ctx.obj['style']['error']} The module already exists !", err=True)
+        raise typer.Exit(code=1)
 
     try:
         git.Repo.clone_from(url=template_url, to_path=p / module_name)
     except git.exc.CommandError:
-        click.echo(f"{error_style} Unable to clone template !")
-        exit(1)
+        typer.echo(
+            f"{ctx.obj['style']['error']} Unable to clone the template !", err=True
+        )
+        typer.echo(traceback.format_exc())
+        raise typer.Exit(code=1)
 
     shutil.rmtree(p / module_name / ".git", onerror=_on_rmtree_error)
     (p / module_name / "LICENSE").unlink(missing_ok=True)
@@ -583,84 +743,91 @@ def cli_modules_create(module_name, readme):
     if not readme:
         (p / module_name / "readme.md").unlink(missing_ok=True)
 
-    click.echo(f"{success_style} The module has been created in `{p / module_name}`.")
+    typer.echo(
+        f"{ctx.obj['style']['success']} The module has been created in `{p / module_name}`."
+    )
 
 
 # init <project_name>
 @cli.command(name="init")
-@click.argument("project_path", type=click.Path())
-def cli_projet_init(project_path):
+def cli_projet_init(
+    ctx: typer.Context,
+    project_path: Path = typer.Argument(
+        ...,
+        dir_okay=True,
+        writable=True,
+        help="The project name",
+    ),
+):
     """
     Init a new Modular project
     """
-
-    p = Path(project_path)
-
     # check if the path already exists
-    if p.is_dir():
-        click.secho(f"{error_style} the path `{p}` already exist !")
-        exit(1)
+    if project_path.is_dir():
+        typer.echo(f"{ctx.obj['style']['error']} the path `{project_path}` already exists !")
+        raise typer.Exit(code=1)
 
     # Initialization
-    click.echo(f"{info_style} Initializing a new project at `{p}` ...")
-    (p / "modules").mkdir(parents=True)
+    typer.echo(
+        f"{ctx.obj['style']['info']} Initializing a new project at `{project_path}` ..."
+    )
+    (project_path / "modules").mkdir(parents=True)
 
-    alembic_cfg = AlembicConfig(file_=p / "alembic.ini")
-    alembic_cfg.set_main_option("script_location", str(p / "db_migrations"))
+    alembic_cfg = AlembicConfig(file_=project_path / "alembic.ini")
+    alembic_cfg.set_main_option("script_location", str(project_path / "db_migrations"))
 
     # initialize the db migrations
     with open(os.devnull, "w") as f:
         with redirect_stdout(f):
             command.init(
-                config=alembic_cfg, directory=p / "db_migrations", template="default"
+                config=alembic_cfg,
+                directory=project_path / "db_migrations",
+                template="default",
             )
 
     # creating the venv
-    click.echo(f"{info_style} Creating the venv ...")
-    venv.EnvBuilder(with_pip=True).create(p / "venv")
+    typer.echo(f"{ctx.obj['style']['info']} Creating the venv ...")
+    venv.EnvBuilder(with_pip=True).create(project_path / "venv")
 
     # install dependancies
-    click.echo(f"{info_style} Installing dependancies in the venv ...")
+    typer.echo(f"{ctx.obj['style']['info']} Installing dependancies in the venv ...")
 
     # on Windows
     if os.name == "nt":
-        python_path = p / "venv" / "Scripts" / "python.exe"
+        python_path = project_path / "venv" / "Scripts" / "python.exe"
 
     # on Unix
     else:
-        python_path = p / "venv" / "bin" / "python"
+        python_path = project_path / "venv" / "bin" / "python"
 
-    subprocess.run(
-        [str(python_path), "-m", "pip", "install", "-U", "pip"],
-        check=True,
-    )
+    subprocess.run([python_path, "-m", "pip", "install", "-U", "pip"], check=True)
     subprocess.run(
         [
-            str(python_path),
+            python_path,
             "-m",
             "pip",
             "install",
             "-r",
-            str(Path(__file__).parent / "venv_requirements.txt"),
+            Path(__file__).parent / "venv_requirements.txt",
         ],
         check=True,
     )
 
     shutil.copyfile(
         src=Path(__file__).parent / "venv_requirements.txt",
-        dst=p / "requirements.txt",
+        dst=project_path / "requirements.txt",
     )
 
-    with open(p / ".env", "w", encoding="utf-8") as f:
+    with open(project_path / ".env", "w", encoding="utf-8") as f:
         print('ENVIRONMENT="developpment"', file=f)
         print('PG_DNS="postgres://user:password@host:port/database"', file=f)
 
-    cd_message = click.style(f"cd {p}", bold=True, fg="green")
-    modularAPI_message = click.style("ModularAPI", bold=True, fg="green")
-    click.echo(
-        f"\n{success_style} You can now do `{cd_message}` and start using {modularAPI_message}"
+    cd_message = typer.style(f"cd {project_path}", bold=True, fg="green")
+    modularAPI_message = typer.style("ModularAPI", bold=True, fg="green")
+    typer.echo(
+        f"\n{ctx.obj['style']['success']} You can now do `{cd_message}` and start using {modularAPI_message}"
     )
-    click.echo(f"\n{warning_style} Don't forget to edit `{p / '.env'}` !")
+    typer.echo(f"\nDon't forget to edit `{project_path / '.env'}` !")
 
 
 if __name__ == "__main__":
