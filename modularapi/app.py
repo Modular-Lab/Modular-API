@@ -28,39 +28,33 @@ if get_setting().LOG_TO_STDOUT:
 def get_app():
     app = FastAPI()
 
-    modules = tuple(Path().glob("modules/*"))
-    if modules:
-        for module in modules:
-            if module.is_dir():
-                module_path = ".".join(module.parts)
-                logger.info(f"loading module [{module_path}]")
+    modules = tuple(p for p in Path().glob("modules/*") if p.is_dir())
+    if not modules:
+        logger.warning("There is no modules installed !")
+    for module in modules:
+        module_path = ".".join(module.parts)
+        logger.info(f"loading module [{module_path}]")
 
-                try:
-                    m = import_module(".".join([module_path, "main"]))
-                    on_load_hook = getattr(m, "on_load", None)
-                    if on_load_hook is not None:
+        if not (module / "main.py").is_file():
+            logger.error(f"Could not load module {module_path} missing main.py!")
+            continue
 
-                        # check if it's an awaitable
-                        if asyncio.iscoroutinefunction(on_load_hook):
-                            t = threading.Thread(
-                                target=asyncio.run, args=[on_load_hook(app)]
-                            )
-                            t.start()
-                            t.join()
-                            # todo raise the exception from the thread
-                        else:
-                            on_load_hook(app)
+        m = import_module(".".join([module_path, "main"]))
+        on_load_hook = getattr(m, "on_load", None)
+        if on_load_hook is not None:
 
-                    # load "db.py" if it exists and it's a file
-                    if (module / "db.py").is_file():
-                        import_module(".".join([module_path, "db"]))
+            # check if it's an awaitable
+            if asyncio.iscoroutinefunction(on_load_hook):
+                t = threading.Thread(target=asyncio.run, args=[on_load_hook(app)])
+                t.start()
+                t.join()
+                # todo raise the exception from the thread
+            else:
+                on_load_hook(app)
 
-                except ModuleNotFoundError:
-                    logger.error(
-                        f"Could not load module {module_path} missing main.py!"
-                    )
-    else:
-        logger.warning("There is no modules folder !")
+        # load "db.py" if it exists and it's a file
+        if (module / "db.py").is_file():
+            import_module(".".join([module_path, "db"]))
 
     # ensure the database is up to date
     engine = create_engine(get_setting().PG_DNS)

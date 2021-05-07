@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "ModularAPI"
-version = "0.2.0"
-description = "A CLI Framework based on FastAPI using module-based architecture."
+version = "0.3.2"
+description = "A CLI Framework based on FastAPI and Typer using module-based architecture."
 authors = ["Modular-lab <contact.flapili@gmail.com>"]
 license = "MIT"
 homepage = "https://modular-lab.github.io/Modular-API/"
@@ -10,11 +10,11 @@ include = ["LICENSE"]
 
 [tool.poetry.dependencies]
 python = "^3.6.1"
-click = "^7.1.2"
 GitPython = "^3.1.13"
 alembic = "^1.5.5"
 psycopg2-binary = "^2.8.6"
 pydantic = "^1.8"
+typer = {extras = ["all"], version = "^0.3.2"}
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
