@@ -275,7 +275,7 @@ def cli_db_revision(
     ),
     sql: bool = typer.Option(
         False,
-        "-sql",
+        "--sql",
         help="Whether to dump the script out as a SQL string; when specified, the script is dumped to stdout.",
     ),
     head: str = typer.Option(
