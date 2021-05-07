@@ -1,4 +1,14 @@
 # coding: utf-8
+from pathlib import Path
+
+from alembic.config import Config
+
+
+class AlembicConfig(Config):
+    def get_template_directory(self):
+        pkg_dir = Path(__file__).resolve().parent
+        return pkg_dir / "templates"
+
 
 # from https://stackoverflow.com/a/2656405
 def _on_rmtree_error(func, path, exc_info):
