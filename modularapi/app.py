@@ -26,7 +26,11 @@ if get_setting().LOG_TO_STDOUT:
 
 
 def get_app():
-    app = FastAPI()
+    app = FastAPI(
+        openapi_url=get_setting().OPENAPI_URL if get_setting().OPENAPI_URL != "DISABLED" else None,
+        docs_url=get_setting().DOCS_URL if get_setting().DOCS_URL != "DISABLED" else None,
+        redoc_url=get_setting().REDOC_URL if get_setting().REDOC_URL != "DISABLED" else None,
+    )
 
     modules = tuple(p for p in Path().glob("modules/*") if p.is_dir())
     if not modules:
