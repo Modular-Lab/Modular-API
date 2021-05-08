@@ -8,7 +8,7 @@ In order to easily manage differents types of configurations you can use env var
     It is possible to configure multiple env using `.env` files.
 
 !!! warning
-    Even if you don't want to use `.env` file you must have one (but you can leave it blank).
+    If you provide an incorect `.env` filepath it will be silently ignored !
 
 ??? example "Linux"
     ```
@@ -35,6 +35,26 @@ The DOTHENV_PATH variable environnment is used to provide a path to the `.env` f
 This variable is **required**.
 
 The postgres url to connect to the database, see [https://www.postgresql.org/docs/13/libpq-connect.html#LIBPQ-CONNSTRING](https://www.postgresql.org/docs/13/libpq-connect.html#LIBPQ-CONNSTRING){target=_blank} for more information.
+
+### Documentation
+
+#### OPENAPI_URL
+
+default: `/openapi.json`
+Could be set to `DISABLED` to disable it
+
+!!! info
+    that will also disable docs et redoc UI.
+
+#### DOCS_URL
+
+default: `/docs`
+Could be set to `DISABLED` to disable it
+
+#### REDOC_URL
+
+default: `/redoc`
+Could be set to `DISABLED` to disable it
 
 ### Logging
 
